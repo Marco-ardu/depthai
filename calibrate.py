@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import depthai as dai
 import numpy as np
+import serial
 
 import depthai_helpers.calibration_utils as calibUtils
 
@@ -94,7 +95,7 @@ def parse_args():
                         required=False, help="Set the manual lens position of the camera for calibration")
     parser.add_argument("-fps", "--fps", default=30, type=int,
                         required=False, help="Set capture FPS for all cameras. Default: %(default)s")
-    
+
     options = parser.parse_args()
 
     # Set some extra defaults, `-brd` would override them
@@ -103,9 +104,9 @@ def parse_args():
             options.markerSizeCm = options.squareSizeCm * 0.75
         else:
             raise argparse.ArgumentError(options.markerSizeCm, "-ms / --markerSizeCm needs to be provided (you can use -db / --defaultBoard if using calibration board from this repository or calib.io to calculate -ms automatically)")
-    if options.squareSizeCm < 2.2:
-        raise argparse.ArgumentTypeError("-s / --squareSizeCm needs to be greater than 2.2 cm")
-        
+    # if options.squareSizeCm < 2.2:
+    #     raise argparse.ArgumentTypeError("-s / --squareSizeCm needs to be greater than 2.2 cm")
+
     return options
 
 
@@ -117,6 +118,11 @@ class Main:
     current_polygon = 0
     images_captured_polygon = 0
     images_captured = 0
+    serialIndex = 1
+    com_port = "COM4"
+    baud_rate = 4800
+
+    ser = serial.Serial(com_port, baud_rate, timeout=0.01)
 
     def __init__(self):
         self.args = parse_args()
@@ -185,7 +191,7 @@ class Main:
         else:
             cam_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
             cam_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-                
+
         cam_left.setResolution(
             dai.MonoCameraProperties.SensorResolution.THE_480_P)
         cam_left.setFps(self.args.fps)
@@ -207,6 +213,7 @@ class Main:
             rgb_cam.setInterleaved(False)
             rgb_cam.setBoardSocket(dai.CameraBoardSocket.RGB)
             rgb_cam.setIspScale(2, 3)
+            # rgb_cam.initialControl.setAutoFocusMode(dai.RawCameraControl.AutoFocusMode.AUTO)
             rgb_cam.initialControl.setManualFocus(self.focus_value)
             rgb_cam.setFps(self.args.fps)
             xout_rgb_isp = pipeline.createXLinkOut()
@@ -338,20 +345,33 @@ class Main:
             if key == 27 or key == ord("q"):
                 print("py: Calibration has been interrupted!")
                 raise SystemExit(0)
-            elif key == ord(" "):
-                if debug:
-                    print("setting capture true------------------------")
-                capturing = True
+            elif key == ord("s"):
+                print("key {:02X}".format(self.serialIndex))
+                cmd = bytes.fromhex("{:02X}".format(self.serialIndex))
+                if self.ser.writable():
+                    self.ser.write(cmd)
+            if self.ser.readable():
+                data = self.ser.read(1)
+                data = hex(int.from_bytes(data, byteorder="big"))
+                # print("read:::", type(data))
+                if int(data, 16) in [i for i in range(1, 14)]:
+                    print("read", data)
+                    capturing = True
+                    self.serialIndex += 1
+            # elif key == ord(" "):
+            #     if debug:
+            #         print("setting capture true------------------------")
+            #     capturing = True
 
             frame_list = []
             # left_frame = recent_left.getCvFrame()
             # rgb_frame = recent_color.getCvFrame()
-            print('List size')
-            print(len(recent_frames))  
+            # print('List size')
+            # print(len(recent_frames))
             for packet in recent_frames:
                 frame = packet[1].getCvFrame()
-                print('Name: {}, size: {}'.format(packet[0], frame.shape))
-                
+                # print('Name: {}, size: {}'.format(packet[0], frame.shape))
+
                 # print(;packet[0])
                 # frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
                 if packet[0] == 'rgb':
@@ -359,13 +379,13 @@ class Main:
                 # print(frame.shape)
                 if self.polygons is None:
                     self.height, self.width = frame.shape
-                    print(self.height, self.width)
+                    # print(self.height, self.width)
                     self.polygons = calibUtils.setPolygonCoordinates(
                         self.height, self.width)
 
                 # if debug:
                 #     print("Timestamp difference ---> l & rgb")
-                lrgb_time = 0 
+                lrgb_time = 0
                 if not self.args.disableRgb:
                     lrgb_time = min([abs((recent_left.getTimestamp() - recent_color.getTimestamp()).microseconds), abs((recent_color.getTimestamp() - recent_left.getTimestamp()).microseconds)])
                 lr_time = min([abs((recent_left.getTimestamp() - recent_right.getTimestamp()).microseconds), abs((recent_right.getTimestamp() - recent_left.getTimestamp()).microseconds)])
@@ -386,22 +406,24 @@ class Main:
                         captured_right_frame = frame.copy()
                 else:
                     if debug:
-                        if lrgb_time > 10000:
-                            print("Timestamp difference --->L-RGB")
-                            print(lrgb_time)
-                        if lr_time > 30000:
-                            print("Timestamp difference --->L-R")
-                            print(lr_time)
+                        pass
 
-                print('tried status')
-                print(tried_color)
-                print(tried_left)
-                print(tried_right)
-                print('tried status')
+                        # if lrgb_time > 10000:
+                        #     print("Timestamp difference --->L-RGB")
+                        #     print(lrgb_time)
+                        # if lr_time > 30000:
+                        #     print("Timestamp difference --->L-R")
+                        #     print(lr_time)
 
-                print(captured_color)
-                print(captured_left)
-                print(captured_right)
+                # print('tried status')
+                # print(tried_color)
+                # print(tried_left)
+                # print(tried_right)
+                # print('tried status')
+                #
+                # print(captured_color)
+                # print(captured_left)
+                # print(captured_right)
 
                 has_success = (packet[0] == "left" and captured_left) or (packet[0] == "right" and captured_right)  or \
                     (packet[0] == "rgb" and captured_color)
@@ -429,11 +451,11 @@ class Main:
                 # cv2.imshow(packet.stream_name, small_frame)
                 if packet[0] == "rgb":
                     small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-                    print("Packaet name : {}, shape : {}".format(packet[0], small_frame.shape))
+                    # print("Packaet name : {}, shape : {}".format(packet[0], small_frame.shape))
                 else:
                     small_frame = cv2.resize(
-                        frame, (0, 0), fx=self.output_scale_factor, fy=self.output_scale_factor)         
-                    print("Packaet name : {}, shape : {}".format(packet[0], small_frame.shape))
+                        frame, (0, 0), fx=self.output_scale_factor, fy=self.output_scale_factor)
+                    # print("Packaet name : {}, shape : {}".format(packet[0], small_frame.shape))
 
                 frame_list.append(small_frame)
 
@@ -450,6 +472,10 @@ class Main:
 
                     self.images_captured += 1
                     self.images_captured_polygon += 1
+                    cmd = bytes.fromhex("{:02X}".format(self.serialIndex))
+                    print("index: ", cmd)
+                    if self.ser.writable():
+                        self.ser.write(cmd)
                     capturing = False
                     tried_left = False
                     tried_right = False
@@ -457,8 +483,8 @@ class Main:
                     captured_left = False
                     captured_right = False
                     captured_color = False
-                elif tried_left and tried_right and tried_color: 
-                    #TODO(Sachin): add condition for RGB too and when break happens and if RGB 
+                elif tried_left and tried_right and tried_color:
+                    #TODO(Sachin): add condition for RGB too and when break happens and if RGB
                     # is not received it will throw an error. add an exception to it
                     self.show_failed_capture_frame()
                     capturing = False
@@ -478,11 +504,11 @@ class Main:
                         finished = True
                         cv2.destroyAllWindows()
                         break
-            
+
             combine_img = None
             if not self.args.disableRgb:
-                print('Frame list size:  ')
-                print(len(frame_list))
+                # print('Frame list size:  ')
+                # print(len(frame_list))
                 frame_list[2] = np.pad(frame_list[2], ((120, 0), (0,0)), 'constant', constant_values=0)
                 combine_img = np.hstack((frame_list[0], frame_list[1], frame_list[2]))
             else:
@@ -558,7 +584,7 @@ class Main:
                     self.board_config['board_config']['left_to_rgb_distance_cm'], 0.0, 0.0]
                 calibration_handler.setCameraExtrinsics(
                     right, dai.CameraBoardSocket.RGB, calibData[7], calibData[8], measuredTranslation)
-            
+
             resImage = None
             if not self.device.isClosed():
                 dev_info = self.device.getDeviceInfo()
@@ -566,7 +592,7 @@ class Main:
                 calib_dest_path = dest_path + '/' + mx_serial_id + '.json'
                 calibration_handler.eepromToJsonFile(calib_dest_path)
                 is_write_succesful = False
-                
+
                 try:
                     is_write_succesful = self.device.flashCalibration(
                         calibration_handler)
@@ -619,7 +645,7 @@ class Main:
                 traceback.print_exc()
                 print("An error occurred trying to create image dataset directories!")
                 raise SystemExit(1)
-            self.show_info_frame()
+            # self.show_info_frame()
             self.capture_images()
         self.dataset_path = str(Path("dataset").absolute())
         if 'process' in self.args.mode:
