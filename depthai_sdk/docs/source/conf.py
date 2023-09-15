@@ -67,10 +67,10 @@ html_static_path = ['_static']
 html_favicon = '_static/images/favicon.png'
 html_css_files = [
     'css/index.css',
-    'https://docs.luxonis.com/en/latest/_static/css/navbar.css',
+    'css/navbar.css',
 ]
 html_js_files = [
-    'https://docs.luxonis.com/en/latest/_static/js/navbar.js',
+    'js/navbar.js',
 ]
 
 intersphinx_mapping = {
